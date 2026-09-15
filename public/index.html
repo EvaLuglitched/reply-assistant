@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Reply Assistant</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #faf8f5;
+    --card: #ffffff;
+    --ink: #24211e;
+    --muted: #6d665f;
+    --line: #e5dfd7;
+    --accent: #7a5c48;
+    --warn: #8a4b2a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --bg: #1a1816;
+      --card: #242120;
+      --ink: #efe9e3;
+      --muted: #a79e95;
+      --line: #383331;
+      --accent: #c9a288;
+      --warn: #e0a074;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 32px 16px 64px;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; font-weight: 600; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  .hint { font-weight: 400; color: var(--muted); }
+  textarea, select, input[type="text"] {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--bg);
+    color: var(--ink);
+    font: inherit;
+    resize: vertical;
+  }
+  textarea { min-height: 110px; }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 16px; }
+  .row > div { flex: 1 1 200px; min-width: 0; }
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .check { display: flex; align-items: center; gap: 8px; margin-top: 16px; font-size: 14px; }
+  .check input { accent-color: var(--accent); width: 16px; height: 16px; }
+  button {
+    margin-top: 20px;
+    width: 100%;
+    padding: 12px;
+    border: 0;
+    border-radius: 9px;
+    background: var(--accent);
+    color: #fff;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled { opacity: .55; cursor: default; }
+  .draft { border-top: 1px solid var(--line); padding-top: 16px; margin-top: 16px; }
+  .draft:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
+  .tag {
+    display: inline-block; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--accent); font-weight: 700; margin-bottom: 6px;
+  }
+  .text { white-space: pre-wrap; margin-bottom: 8px; }
+  .why { color: var(--muted); font-size: 13px; }
+  .copy {
+    margin-top: 8px; width: auto; padding: 6px 12px; font-size: 13px;
+    background: transparent; color: var(--accent); border: 1px solid var(--line);
+  }
+  .read { font-size: 13px; color: var(--muted); }
+  .read b { color: var(--ink); font-weight: 600; }
+  .note {
+    border-left: 3px solid var(--warn); padding-left: 12px; color: var(--warn); font-size: 14px;
+  }
+  ul { margin: 8px 0 0; padding-left: 20px; color: var(--muted); font-size: 13px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Reply Assistant</h1>
+  <p class="sub">Paste what they sent. Get something you can actually send back.</p>
+
+  <form class="card" id="form">
+    <label for="msg">What they sent you</label>
+    <textarea id="msg" required placeholder="Paste the message here…"></textarea>
+
+    <div class="row">
+      <div>
+        <label for="rel">Who is it from</label>
+        <select id="rel">
+          <option value="parent">Parent</option>
+          <option value="parent_figure">Parent figure</option>
+          <option value="sibling">Sibling</option>
+          <option value="relative">Relative</option>
+          <option value="close_friend">Close friend</option>
+          <option value="distant_friend" selected>Distant friend</option>
+          <option value="old_classmate">Old classmate</option>
+          <option value="mentor">Mentor / teacher</option>
+          <option value="acquaintance">Acquaintance</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div>
+        <label for="len">Length</label>
+        <select id="len">
+          <option value="short">Short — a line or two</option>
+          <option value="medium" selected>Medium — a few sentences</option>
+          <option value="long">Long — a real paragraph</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="warmth">Warmth — <span class="hint" id="warmthLabel">friendly</span></label>
+        <input type="range" id="warmth" min="1" max="5" value="3" />
+      </div>
+    </div>
+
+    <div class="check">
+      <input type="checkbox" id="followup" />
+      <label for="followup" style="margin:0;font-weight:400;">I'm willing to promise a proper catch-up later</label>
+    </div>
+
+    <div style="margin-top:16px;">
+      <label for="notes">Anything true I should include <span class="hint">(optional)</span></label>
+      <input type="text" id="notes" placeholder="e.g. finals week, I did eat, free after the 20th" />
+    </div>
+
+    <button type="submit" id="go">Draft my replies</button>
+  </form>
+
+  <div class="card" id="out" hidden></div>
+</div>
+
+<script type="module">
+import { generateReplies } from "./replyClient.js";
+
+const warmthWords = { 1: "polite", 2: "light", 3: "friendly", 4: "close", 5: "openly affectionate" };
+const form = document.getElementById("form");
+const out = document.getElementById("out");
+const go = document.getElementById("go");
+const warmth = document.getElementById("warmth");
+const warmthLabel = document.getElementById("warmthLabel");
+
+warmth.addEventListener("input", () => { warmthLabel.textContent = warmthWords[warmth.value]; });
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  go.disabled = true;
+  go.textContent = "Reading it…";
+  out.hidden = false;
+  out.innerHTML = '<p class="read">Working out what they actually need…</p>';
+
+  try {
+    const data = await generateReplies({
+      incoming_message: document.getElementById("msg").value,
+      relationship: document.getElementById("rel").value,
+      warmth: Number(warmth.value),
+      length: document.getElementById("len").value,
+      promise_followup: document.getElementById("followup").checked,
+      user_notes: document.getElementById("notes").value,
+    });
+    render(data);
+  } catch (err) {
+    out.innerHTML = `<p class="note">${esc(err.message)}</p>`;
+  } finally {
+    go.disabled = false;
+    go.textContent = "Draft my replies";
+  }
+});
+
+function render(d) {
+  let html = "";
+
+  if (d.flags?.urgent) {
+    html += `<p class="note">This one reads as urgent. A generated reply probably isn't the right answer — consider calling them.</p>`;
+  }
+  if (d.care_note) {
+    html += `<p class="note">${esc(d.care_note)}</p>`;
+  }
+
+  if (d.read) {
+    html += `<p class="read"><b>What's under it:</b> ${esc(d.read.emotional_need)}. ${esc(d.read.reply_job)}</p>`;
+  }
+
+  (d.drafts || []).forEach((dr, i) => {
+    html += `<div class="draft">
+      <span class="tag">${esc(dr.label)}</span>
+      <div class="text" id="t${i}">${esc(dr.text)}</div>
+      <div class="why">${esc(dr.why)}</div>
+      <button class="copy" data-i="${i}" type="button">Copy</button>
+    </div>`;
+  });
+
+  if (d.missing_details?.length) {
+    html += `<div class="draft"><b style="font-size:13px;">Fill these in before sending</b><ul>` +
+      d.missing_details.map((m) => `<li>${esc(m)}</li>`).join("") + `</ul></div>`;
+  }
+
+  out.innerHTML = html || `<p class="read">Nothing to draft here.</p>`;
+
+  out.querySelectorAll(".copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(document.getElementById("t" + btn.dataset.i).textContent);
+      btn.textContent = "Copied";
+      setTimeout(() => (btn.textContent = "Copy"), 1200);
+    });
+  });
+}
+</script>
+</body>
+</html>
