@@ -1,149 +1,143 @@
 # Reply Assistant
 
 Generates replies to parents and distant friends when you're busy and don't want to
-answer. Reads the incoming message, works out the emotional need under it, and returns
-three drafts you can send as yourself.
+answer. Reads the incoming message — and optionally screenshots of the earlier
+conversation — works out what the sender actually needs underneath the words, and
+returns three drafts you could send as yourself.
+
+Live: https://reply-assistant-three.vercel.app
+
+## Layout
 
 ```
 reply-assistant/
-├── api/generate.js        ← the serverless endpoint (this is your API)
-├── lib/prompt.js          ← the system prompt (the actual product)
+├── lib/prompt.js          ← the system prompt. This is the product.
 ├── lib/schema.js          ← forces Gemini to return parseable JSON
-├── lib/validate.js        ← input guards
-├── public/index.html      ← working demo UI (replace with your AI Studio build)
-├── public/replyClient.js  ← the fetch helper your UI imports
+├── lib/validate.js        ← input guards, including image size limits
+├── api/generate.js        ← the serverless endpoint
+├── index.html             ← Vite entry
+├── src/                   ← the React interface (designed in AI Studio)
+│   ├── App.tsx            ← form, tabs, submit
+│   ├── api.ts             ← fetch wrapper + client-side image downscaling
+│   ├── types.ts           ← the request/response contract
+│   └── components/
+│       └── SafetyNotices.tsx  ← urgent / pressure / private-request warnings
 ├── test/dryrun.js         ← offline checks, no API key needed
 └── PROMPT.md              ← readable copy of the prompt
 ```
 
-## 1. Get a key
+`public/` holds the original single-file demo. Nothing uses it; `vite.config.ts`
+ignores the folder. Delete it when you're ready.
 
-https://aistudio.google.com/apikey → create key → copy it.
-
-## 2. Run it locally
+## Running it locally
 
 ```bash
-npm i -g vercel
-cp .env.example .env.local     # paste your key into GEMINI_API_KEY
-vercel dev                     # http://localhost:3000
-node test/dryrun.js            # sanity check, no key required
+cd ~/Projects/reply-assistant
+npm install
+vercel dev          # http://localhost:3000
 ```
 
-## 3. Push to GitHub
+Use `vercel dev`, not `npm run dev`. Plain `vite` serves the interface but not
+`/api/generate`, so every request will fail.
 
 ```bash
-git init
+node test/dryrun.js   # 18 offline checks, no key or network needed
+npx tsc --noEmit      # typecheck
+```
+
+## Environment variables
+
+`vercel dev` does **not** read `.env.local`. It reads `.vercel/.env.development.local`,
+which `vercel pull` writes from your Vercel project. So:
+
+```bash
+vercel env add GEMINI_API_KEY development   # paste the key at the prompt
+vercel env add GEMINI_API_KEY production    # same key, second command
+vercel pull
+```
+
+`GEMINI_MODEL` is optional and defaults to `gemini-3.6-flash`. Google retires model
+names; if the API starts returning 404, the error message names the replacement —
+set `GEMINI_MODEL` in Vercel rather than editing code.
+
+## Deploying
+
+Connected to GitHub, so:
+
+```bash
 git add .
-git commit -m "Reply assistant: prompt + Gemini API route + UI"
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/reply-assistant.git
-git push -u origin main
+git commit -m "what changed"
+git push
 ```
 
-`.gitignore` already excludes `.env.local`. **Never commit your key** — Google
-auto-revokes keys it finds in public repos.
+Vercel rebuilds automatically. `vercel --prod` still works for a manual deploy.
 
-## 4. Deploy on Vercel
+## The API
 
-1. vercel.com → Add New → Project → import the repo.
-2. Framework preset: **Other**. No build command needed.
-3. Settings → Environment Variables → add `GEMINI_API_KEY`. Add `GEMINI_MODEL` and
-   `ALLOWED_ORIGINS` if you want them.
-4. Deploy. Your endpoint is `https://your-site.vercel.app/api/generate`.
-
-Changing an env var requires a redeploy to take effect.
-
-## 5. Wiring your AI Studio interface to it
-
-AI Studio's generated app calls Gemini **from the browser with the key baked in**.
-That's the thing you want to remove — it exposes your key and it's why AI Studio's
-preview sandbox gives you CORS and network errors. Replace that call with one to
-your own endpoint.
-
-Find the AI Studio code that does `new GoogleGenAI({ apiKey })` / `generateContent(...)`
-and delete it. Then:
-
-```ts
-const res = await fetch("https://your-site.vercel.app/api/generate", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    incoming_message: message,
-    relationship: "parent",     // see the enum below
-    warmth: 4,                  // 1–5 slider
-    length: "short",            // short | medium | long
-    promise_followup: true,     // checkbox
-    user_notes: notes,          // optional, free text
-  }),
-});
-const data = await res.json();
-```
-
-`public/replyClient.js` is that call already wrapped — copy it into your AI Studio
-project and set `API_BASE` to your Vercel URL.
-
-**The AI Studio CORS problem.** If your UI stays hosted on AI Studio, the browser
-sends a cross-origin request and AI Studio's sandbox often blocks it regardless of
-what your server allows. Two fixes, in order of how well they work:
-
-- **Best: export the AI Studio app and host it on the same Vercel project.** Download
-  the code, drop the built files into `public/` (or let Vercel build it), and call
-  `/api/generate` as a relative path. Same origin, no CORS, nothing to configure.
-  This is also why the demo page here exists — it shows the shape to aim for.
-- **If you keep the UI on AI Studio:** set `ALLOWED_ORIGINS=https://aistudio.google.com`
-  in Vercel. The endpoint already answers preflight `OPTIONS` requests. This works
-  sometimes; the sandbox is the variable you don't control.
-
-Develop in VS Code either way — `vercel dev` runs the API and the UI together on one
-localhost origin, which is the same-origin setup you'll ship.
-
-## Request fields
-
-| field | type | notes |
-|---|---|---|
-| `incoming_message` | string, required | ≤ 4000 chars, any language |
-| `relationship` | string | `parent`, `parent_figure`, `sibling`, `relative`, `close_friend`, `distant_friend`, `old_classmate`, `mentor`, `acquaintance`, `other` |
-| `warmth` | 1–5 | clamped |
-| `length` | string | `short`, `medium`, `long` |
-| `promise_followup` | boolean | false = no "let's catch up soon" |
-| `user_notes` | string | ≤ 1000 chars. **Treated as the only true facts about you.** |
-| `language` | string | optional; defaults to matching the incoming message |
-
-## Response
+`POST /api/generate`
 
 ```json
 {
-  "read": { "who": "...", "surface": "...", "emotional_need": "...", "reply_job": "..." },
-  "drafts": [{ "label": "warm", "text": "...", "why": "..." }],
-  "missing_details": ["What did you actually eat today?"],
-  "flags": { "urgent": false, "pressure_detected": false, "sensitive_request": false },
-  "care_note": ""
+  "receivedMessage": "did you eat today",
+  "senderRelationship": "parent",
+  "warmth": 4,
+  "length": "short",
+  "promiseCatchUp": true,
+  "additionalContext": "finals week, had noodles",
+  "screenshots": [{ "mimeType": "image/jpeg", "data": "<base64>" }]
 }
 ```
 
-Three things your UI should actually render, not just the drafts:
+`senderRelationship` is one of `parent`, `parent_figure`, `sibling`, `relative`,
+`close_friend`, `distant_friend`, `old_classmate`, `mentor`, `acquaintance`, `other`.
 
-- **`missing_details`** — the model leaves `[bracketed placeholders]` instead of
-  inventing facts about your life. Show these as a checklist before the user sends.
-- **`flags.urgent`** — the incoming message looks like a real emergency. Show a
-  "maybe just call them" prompt instead of a copy button.
-- **`care_note`** — the one place the model speaks to the user directly. Usually empty.
+`additionalContext` is treated as the only true facts about your life.
+
+`screenshots` are optional, at most 4. The browser downscales them to 1400px and
+re-encodes as JPEG before upload, because phone screenshots are often 3–8MB and
+Vercel caps a request body at about 4.5MB.
+
+Response:
+
+```json
+{
+  "replies": [{ "id", "label", "title", "styleTag", "text", "why", "toneBadges", "wordCount", "charCount" }],
+  "relationshipAnalysis": { "connectionTier", "relationshipDynamic", "reciprocityScore", "emotionalTone", "cadenceSummary", "keyThemes", "suggestedStrategy", "screenshotInsights" },
+  "missingDetails": ["What did you actually eat today?"],
+  "flags": { "urgent": false, "pressureDetected": false, "sensitiveRequest": false },
+  "careNote": ""
+}
+```
+
+Three parts of that response are the reason this app is different from a generic
+reply generator, and the UI renders all three:
+
+- **`missingDetails`** — the model leaves `[bracketed placeholders]` rather than
+  inventing facts about your life. These are the questions you need to answer
+  before sending.
+- **`flags.urgent`** — the incoming message reads as a real emergency, so the UI
+  suggests calling instead of sending a draft.
+- **`careNote`** — the one place the model speaks to you directly. Usually empty.
+
+`reciprocityScore` rates *the message* — how strongly it invites a reply — not the
+people. It is deliberately not a score of who owes whom.
 
 ## Editing the prompt
 
-`lib/prompt.js` is the whole product; the API route is plumbing. Things worth tuning
-after you test it on real messages:
+`lib/prompt.js` is the whole product; everything else is plumbing. Worth tuning
+after testing on real messages:
 
-- the **relationship notes** section — add the specific people in your life
-- the **three draft strategies** (warm / brief / honest) — rename or replace them
-- the **register rules** — the list of phrases it must never use is where most of the
-  "this sounds like a robot" problem gets fixed
+- **relationship notes** — add the specific people in your life
+- **the three strategies** (warm / brief / honest) — rename or replace them
+- **the register rules** — the list of phrases it must never use is where most of
+  the "this sounds like a robot" problem gets fixed
 
-`PROMPT.md` is a readable copy. If you edit it there, paste it back into
+`PROMPT.md` is a readable copy. Edit there if you like, but paste it back into
 `lib/prompt.js` — that file is what ships.
 
 ## Cost
 
-Gemini's free tier covers a class project comfortably. Each request is roughly
-2.5k input tokens (the prompt) + ~600 output. The rate limiter in `api/generate.js`
-allows 20 requests/min per IP.
+Gemini's free tier covers a class project comfortably. A text request is roughly
+3k input tokens plus ~800 output. Screenshots cost noticeably more — each image is
+several hundred to a couple of thousand extra input tokens. The endpoint rate-limits
+to 20 requests per minute per IP.
