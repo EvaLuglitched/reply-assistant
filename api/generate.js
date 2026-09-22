@@ -3,7 +3,13 @@ import { RESPONSE_SCHEMA } from "../lib/schema.js";
 import { validateBody } from "../lib/validate.js";
 
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
-const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+// Tried in order when the main model is overloaded (503/500) or unavailable (404).
+const FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "gemini-3.5-flash,gemini-3.1-flash-lite")
+  .split(",")
+  .map((m) => m.trim())
+  .filter((m) => m && m !== MODEL);
+const endpointFor = (model) =>
+  `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
 // Origins allowed to call this endpoint from a browser.
 // Set ALLOWED_ORIGINS in Vercel, comma-separated. "*" allows everything.
@@ -190,19 +196,25 @@ export default async function handler(req, res) {
 
   try {
     const payload = JSON.stringify(buildGeminiRequest(check.value));
-    const callGemini = () =>
-      fetch(ENDPOINT, {
+    const callGemini = (model) =>
+      fetch(endpointFor(model), {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
         body: payload,
         signal: controller.signal,
       });
+    const busy = (r) => r.status === 500 || r.status === 503;
 
-    let upstream = await callGemini();
-    // Gemini occasionally returns 500/503 when overloaded; one quick retry usually clears it.
-    if (upstream.status === 500 || upstream.status === 503) {
-      await new Promise((r) => setTimeout(r, 1500));
-      upstream = await callGemini();
+    // Main model, one retry if it's overloaded, then each fallback model once.
+    let upstream = await callGemini(MODEL);
+    if (busy(upstream)) {
+      await new Promise((r) => setTimeout(r, 1200));
+      upstream = await callGemini(MODEL);
+    }
+    for (const model of FALLBACK_MODELS) {
+      if (!busy(upstream) && upstream.status !== 404) break;
+      console.warn(`Gemini ${upstream.status} on previous model; trying ${model}`);
+      upstream = await callGemini(model);
     }
 
     if (!upstream.ok) {
@@ -213,7 +225,7 @@ export default async function handler(req, res) {
       }
       if (upstream.status === 404) {
         return res.status(502).json({
-          error: `The model "${MODEL}" is not available to this API key. Set GEMINI_MODEL to a current model name.`,
+          error: `The model "${MODEL}" (and its fallbacks) are not available to this API key. Set GEMINI_MODEL to a current model name.`,
         });
       }
       return res.status(502).json({ error: describeGeminiError(upstream.status, detail) });

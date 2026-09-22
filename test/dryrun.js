@@ -209,6 +209,30 @@ ok("system prompt contains its required sections");
   assert.ok(!captured.init.body.includes("test-key"), "the key travels in the header, never in the body");
   ok("handler returns normalised replies on the happy path");
 
+  // overloaded main model → falls back to the next model
+  {
+    const urls = [];
+    globalThis.fetch = async (url) => {
+      urls.push(url);
+      if (url.includes("gemini-3.6-flash")) return { ok: false, status: 503, text: async () => '{"error":{"status":"UNAVAILABLE","message":"overloaded"}}' };
+      return { ok: true, status: 200, json: async () => ({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(modelJson) }] } }] }) };
+    };
+    res = makeRes();
+    await handler(makeReq({ ...base, receivedMessage: "are you coming home?" }), res);
+    assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+    assert.equal(urls.length, 3, "main model twice, then one fallback");
+    assert.ok(urls[2].includes("gemini-3.5-flash"), "first fallback is gemini-3.5-flash");
+    ok("handler falls back to another model when Gemini is overloaded");
+  }
+
+  // everything overloaded → clear message
+  globalThis.fetch = async () => ({ ok: false, status: 503, text: async () => '{"error":{"status":"UNAVAILABLE","message":"The model is overloaded."}}' });
+  res = makeRes();
+  await handler(makeReq({ ...base, receivedMessage: "hello?" }), res);
+  assert.equal(res.statusCode, 502);
+  assert.match(res.body.error, /overloaded/);
+  ok("handler says 'overloaded' when every model is busy");
+
   // upstream 404 (retired model)
   globalThis.fetch = async () => ({ ok: false, status: 404, text: async () => '{"error":{"message":"no longer available"}}' });
   res = makeRes();
@@ -239,4 +263,17 @@ ok("system prompt contains its required sections");
   else process.env.GEMINI_API_KEY = realKey;
 }
 
+
+
+// --- error descriptions ---
+{
+  const { describeGeminiError } = await import("../api/generate.js");
+  const k = describeGeminiError(400, JSON.stringify({ error: { code: 400, message: "API key expired. Please renew the API key.", status: "INVALID_ARGUMENT", details: [{ reason: "API_KEY_INVALID" }] } }));
+  assert.match(k, /invalid or has expired/);
+  assert.match(describeGeminiError(403, '{"error":{"status":"PERMISSION_DENIED","message":"Your API key was reported as leaked."}}'), /refused this API key/);
+  assert.match(describeGeminiError(503, '{"error":{"status":"UNAVAILABLE","message":"The model is overloaded."}}'), /overloaded/);
+  assert.match(describeGeminiError(400, '{"error":{"message":"Something odd"}}'), /Gemini 400: Something odd/);
+  assert.match(describeGeminiError(400, "not json"), /Gemini 400/);
+  ok("error messages say what to do");
+}
 console.log(`\n${pass}/${pass} checks passed.`);
