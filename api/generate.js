@@ -78,6 +78,35 @@ export function buildGeminiRequest(input) {
   };
 }
 
+/** Turns a Gemini error body into a message that says what to actually do. */
+export function describeGeminiError(status, detail) {
+  let message = "";
+  let reason = "";
+  try {
+    const e = JSON.parse(detail)?.error || {};
+    message = e.message || "";
+    reason = JSON.stringify(e.details || "") + " " + (e.status || "");
+  } catch {
+    message = String(detail || "").slice(0, 200);
+  }
+  const text = `${message} ${reason}`;
+
+  if (/API_KEY_INVALID|API key not valid|API key expired|expired/i.test(text)) {
+    return "The Gemini API key is invalid or has expired. Create a new key in Google AI Studio and update GEMINI_API_KEY in Vercel, then redeploy.";
+  }
+  if (status === 403 || /PERMISSION_DENIED|SERVICE_DISABLED|leaked|blocked/i.test(text)) {
+    return "Google refused this API key (permission denied). Create a new key in Google AI Studio and update GEMINI_API_KEY in Vercel, then redeploy.";
+  }
+  if (status === 500 || status === 503 || /UNAVAILABLE|overloaded/i.test(text)) {
+    return "Gemini is overloaded right now. Wait a minute and try again.";
+  }
+  if (/location is not supported|FAILED_PRECONDITION/i.test(text)) {
+    return "Gemini isn't available for this account or region (" + (message || "failed precondition") + ").";
+  }
+  const short = message ? `: ${message.slice(0, 160)}` : "";
+  return `The model service returned an error (Gemini ${status}${short}).`;
+}
+
 const countWords = (s) => s.trim().split(/\s+/).filter(Boolean).length;
 
 /** Fills in the fields the model is not asked to produce, and hardens the shape. */
@@ -160,12 +189,21 @@ export default async function handler(req, res) {
   const timeout = setTimeout(() => controller.abort(), hasImages ? 55_000 : 30_000);
 
   try {
-    const upstream = await fetch(ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-      body: JSON.stringify(buildGeminiRequest(check.value)),
-      signal: controller.signal,
-    });
+    const payload = JSON.stringify(buildGeminiRequest(check.value));
+    const callGemini = () =>
+      fetch(ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+        body: payload,
+        signal: controller.signal,
+      });
+
+    let upstream = await callGemini();
+    // Gemini occasionally returns 500/503 when overloaded; one quick retry usually clears it.
+    if (upstream.status === 500 || upstream.status === 503) {
+      await new Promise((r) => setTimeout(r, 1500));
+      upstream = await callGemini();
+    }
 
     if (!upstream.ok) {
       const detail = await upstream.text();
@@ -178,7 +216,7 @@ export default async function handler(req, res) {
           error: `The model "${MODEL}" is not available to this API key. Set GEMINI_MODEL to a current model name.`,
         });
       }
-      return res.status(502).json({ error: "The model service returned an error." });
+      return res.status(502).json({ error: describeGeminiError(upstream.status, detail) });
     }
 
     const data = await upstream.json();
